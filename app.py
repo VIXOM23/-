@@ -2,88 +2,83 @@ from flask import Flask, request, send_file, jsonify, send_from_directory
 from flask_cors import CORS
 import tempfile
 import os
-import requests
-import os
-import requests
-import zipfile
-import tarfile
 import subprocess
-from pathlib import Path
+import sys
 
-def install_graphviz():
-    """Устанавливает Graphviz бинарники в папку проекта"""
-    graphviz_path = Path("./graphviz")
-    
-    if graphviz_path.exists():
-        return str(graphviz_path)
-    
-    # Создаем папку
-    graphviz_path.mkdir(exist_ok=True)
-    
-    # Скачиваем бинарники для Linux (Render использует Ubuntu)
-    if os.name == 'posix':
-        print("Downloading Graphviz for Linux...")
-        
-        # Способ 1: Скачать с официального сайта
-        graphviz_url = "https://gitlab.com/api/v4/projects/4207231/packages/generic/graphviz-releases/9.0.0/graphviz-9.0.0.tar.gz"
-        
-        # Способ 2: Альтернативный источник
-        # graphviz_url = "https://www2.graphviz.org/Packages/stable/portable_source/graphviz-9.0.0.tar.gz"
-        
-        try:
-            # Скачиваем
-            response = requests.get(graphviz_url, timeout=60)
-            tar_path = graphviz_path / "graphviz.tar.gz"
-            
-            with open(tar_path, 'wb') as f:
-                f.write(response.content)
-            
-            # Распаковываем
-            with tarfile.open(tar_path, 'r:gz') as tar:
-                tar.extractall(graphviz_path)
-            
-            # Находим путь к бинарникам
-            extracted_dir = list(graphviz_path.glob("graphviz-*"))[0]
-            bin_path = extracted_dir / "bin"
-            
-            # Добавляем в PATH
-            os.environ["PATH"] = str(bin_path) + ":" + os.environ["PATH"]
-            
-            print(f"Graphviz installed to: {bin_path}")
-            return str(bin_path)
-            
-        except Exception as e:
-            print(f"Graphviz installation failed: {e}")
-            return None
-
-# Устанавливаем Graphviz при запуске приложения
-graphviz_bin_path = install_graphviz()
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
 
-def convert_dot_to_pdf_online(dot_source):
-    """Конвертирует DOT source в PDF используя онлайн сервис"""
+def check_system_graphviz():
+    """Проверяет наличие Graphviz в системе"""
     try:
-        response = requests.get(
-            'https://quickchart.io/graphviz',
-            params={'format': 'pdf', 'graph': dot_source},
-            timeout=30
-        )
-        if response.status_code == 200:
-            return response.content
+        # Проверяем доступность dot
+        result = subprocess.run(['which', 'dot'], capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            dot_path = result.stdout.strip()
+            print(f"✓ Found Graphviz at: {dot_path}")
+            
+            # Проверяем версию
+            version_result = subprocess.run(['dot', '-V'], capture_output=True, text=True, timeout=10)
+            if version_result.returncode == 0:
+                print(f"✓ Graphviz version: {version_result.stderr.strip()}")
+                return True
+            else:
+                print("✗ Graphviz version check failed")
+                return False
         else:
-            raise Exception(f"QuickChart error: {response.status_code}")
+            print("✗ Graphviz not found in PATH")
+            return False
+            
     except Exception as e:
-        raise Exception(f"Online conversion failed: {str(e)}")
+        print(f"✗ Graphviz check failed: {e}")
+        return False
 
-# Главная страница - отдаем HTML
+def install_graphviz_system():
+    """Пытается установить Graphviz системными пакетами"""
+    try:
+        print("Attempting to install Graphviz via apt...")
+        
+        # Обновляем пакеты и устанавливаем graphviz
+        commands = [
+            ['apt-get', 'update'],
+            ['apt-get', 'install', '-y', 'graphviz']
+        ]
+        
+        for cmd in commands:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            if result.returncode != 0:
+                print(f"Command failed: {' '.join(cmd)}")
+                print(f"Error: {result.stderr}")
+                return False
+        
+        print("✓ Graphviz installed via apt")
+        return check_system_graphviz()
+        
+    except Exception as e:
+        print(f"✗ System installation failed: {e}")
+        return False
+
+# Проверяем и при необходимости устанавливаем Graphviz
+print("=== GRAPHVIZ SETUP ===")
+graphviz_available = check_system_graphviz()
+
+if not graphviz_available:
+    print("Graphviz not available, trying to install...")
+    graphviz_available = install_graphviz_system()
+
+print(f"=== GRAPHVIZ READY: {graphviz_available} ===")
+
 @app.route('/')
 def index():
     return send_from_directory('static', 'index.html')
 
-# API endpoint для генерации PDF
 @app.route('/generate-pdf', methods=['POST'])
 def generate_pdf():
+    if not graphviz_available:
+        return jsonify({
+            'error': 'Graphviz not available on server. Please check server logs.'
+        }), 500
+    
     try:
         data = request.json
         
@@ -110,26 +105,17 @@ def generate_pdf():
         # Импортируем здесь, чтобы избежать циклических импортов
         from solve import TreeElem
         
-        # Использование
+        print("=== GENERATING TREE ===")
         TreeElem.initialize_global_data(numbers1, numbers2, multiplier)
 
-        # Создаем корневой элемент (prev=None для корня)
+        # Создаем корневой элемент
         elem1 = TreeElem(0, 0, prev=None, used=[])
         
-        # Получаем DOT source разными способами
-        dot_source = None
+        # Генерируем PDF используя локальный Graphviz
+        print("=== GENERATING PDF ===")
+        pdf_data = elem1.dot.pipe(format='pdf')
         
-        # Способ 1: через атрибут source
-        if hasattr(elem1.dot, 'source'):
-            dot_source = elem1.dot.source
-        # Способ 2: через строковое представление
-        elif hasattr(elem1.dot, '__str__'):
-            dot_source = str(elem1.dot)
-        else:
-            raise Exception("Cannot extract DOT source from graphviz object")
-        
-        # Используем онлайн конвертацию вместо локального Graphviz
-        pdf_data = convert_dot_to_pdf_online(dot_source)
+        print(f"✓ PDF generated successfully, size: {len(pdf_data)} bytes")
 
         with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
             tmp_file.write(pdf_data)
@@ -144,14 +130,56 @@ def generate_pdf():
         )
         
     except Exception as e:
+        print(f"✗ Error: {str(e)}")
         return jsonify({'error': f'Ошибка генерации дерева: {str(e)}'}), 500
 
-# Health check
 @app.route('/health', methods=['GET'])
 def health_check():
-    return jsonify({'status': 'OK', 'message': 'Сервер работает'})
+    return jsonify({
+        'status': 'OK', 
+        'message': 'Сервер работает',
+        'graphviz_available': graphviz_available
+    })
 
-# Отдаем статические файлы (CSS, JS, images)
+@app.route('/debug-graphviz', methods=['GET'])
+def debug_graphviz():
+    """Эндпоинт для отладки Graphviz"""
+    try:
+        # Проверяем доступность dot
+        which_result = subprocess.run(['which', 'dot'], capture_output=True, text=True)
+        dot_path = which_result.stdout.strip() if which_result.returncode == 0 else "Not found"
+        
+        # Проверяем версию
+        version_result = subprocess.run(['dot', '-V'], capture_output=True, text=True)
+        version = version_result.stderr.strip() if version_result.returncode == 0 else "Unknown"
+        
+        # Проверяем Python graphviz пакет
+        try:
+            import graphviz
+            python_graphviz_version = graphviz.__version__
+            python_graphviz_path = graphviz.__file__
+        except ImportError:
+            python_graphviz_version = "Not installed"
+            python_graphviz_path = "N/A"
+        
+        return jsonify({
+            'system': {
+                'dot_path': dot_path,
+                'version': version,
+                'graphviz_available': graphviz_available
+            },
+            'python': {
+                'graphviz_version': python_graphviz_version,
+                'graphviz_path': python_graphviz_path
+            },
+            'environment': {
+                'path': os.environ.get('PATH', '')
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/<path:path>')
 def static_files(path):
     return send_from_directory('static', path)
