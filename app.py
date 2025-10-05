@@ -2,6 +2,7 @@ from flask import Flask, request, send_file, jsonify, send_from_directory
 from flask_cors import CORS
 import tempfile
 import os
+import requests
 
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
@@ -45,6 +46,13 @@ def generate_pdf():
 
         # Создаем корневой элемент (prev=None для корня)
         elem1 = TreeElem(0, 0, prev=None, used=[])
+        response = requests.get(
+                'https://quickchart.io/graphviz',
+                params={'format': 'pdf', 'graph': str(elem1.dot)},
+                timeout=30
+            )
+        if response.status_code == 200:
+            pdf_data =  response.content
         pdf_data = elem1.dot.pipe(format='pdf')
 
         with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
