@@ -7,6 +7,21 @@ import requests
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
 
+def convert_dot_to_pdf_online(dot_source):
+    """Конвертирует DOT source в PDF используя онлайн сервис"""
+    try:
+        response = requests.get(
+            'https://quickchart.io/graphviz',
+            params={'format': 'pdf', 'graph': dot_source},
+            timeout=30
+        )
+        if response.status_code == 200:
+            return response.content
+        else:
+            raise Exception(f"QuickChart error: {response.status_code}")
+    except Exception as e:
+        raise Exception(f"Online conversion failed: {str(e)}")
+
 # Главная страница - отдаем HTML
 @app.route('/')
 def index():
@@ -46,14 +61,21 @@ def generate_pdf():
 
         # Создаем корневой элемент (prev=None для корня)
         elem1 = TreeElem(0, 0, prev=None, used=[])
-        response = requests.get(
-                'https://quickchart.io/graphviz',
-                params={'format': 'pdf', 'graph': str(elem1.dot)},
-                timeout=30
-            )
-        if response.status_code == 200:
-            pdf_data =  response.content
-        pdf_data = elem1.dot.pipe(format='pdf')
+        
+        # Получаем DOT source разными способами
+        dot_source = None
+        
+        # Способ 1: через атрибут source
+        if hasattr(elem1.dot, 'source'):
+            dot_source = elem1.dot.source
+        # Способ 2: через строковое представление
+        elif hasattr(elem1.dot, '__str__'):
+            dot_source = str(elem1.dot)
+        else:
+            raise Exception("Cannot extract DOT source from graphviz object")
+        
+        # Используем онлайн конвертацию вместо локального Graphviz
+        pdf_data = convert_dot_to_pdf_online(dot_source)
 
         with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
             tmp_file.write(pdf_data)
