@@ -3,7 +3,61 @@ from flask_cors import CORS
 import tempfile
 import os
 import requests
+import os
+import requests
+import zipfile
+import tarfile
+import subprocess
+from pathlib import Path
 
+def install_graphviz():
+    """Устанавливает Graphviz бинарники в папку проекта"""
+    graphviz_path = Path("./graphviz")
+    
+    if graphviz_path.exists():
+        return str(graphviz_path)
+    
+    # Создаем папку
+    graphviz_path.mkdir(exist_ok=True)
+    
+    # Скачиваем бинарники для Linux (Render использует Ubuntu)
+    if os.name == 'posix':
+        print("Downloading Graphviz for Linux...")
+        
+        # Способ 1: Скачать с официального сайта
+        graphviz_url = "https://gitlab.com/api/v4/projects/4207231/packages/generic/graphviz-releases/9.0.0/graphviz-9.0.0.tar.gz"
+        
+        # Способ 2: Альтернативный источник
+        # graphviz_url = "https://www2.graphviz.org/Packages/stable/portable_source/graphviz-9.0.0.tar.gz"
+        
+        try:
+            # Скачиваем
+            response = requests.get(graphviz_url, timeout=60)
+            tar_path = graphviz_path / "graphviz.tar.gz"
+            
+            with open(tar_path, 'wb') as f:
+                f.write(response.content)
+            
+            # Распаковываем
+            with tarfile.open(tar_path, 'r:gz') as tar:
+                tar.extractall(graphviz_path)
+            
+            # Находим путь к бинарникам
+            extracted_dir = list(graphviz_path.glob("graphviz-*"))[0]
+            bin_path = extracted_dir / "bin"
+            
+            # Добавляем в PATH
+            os.environ["PATH"] = str(bin_path) + ":" + os.environ["PATH"]
+            
+            print(f"Graphviz installed to: {bin_path}")
+            return str(bin_path)
+            
+        except Exception as e:
+            print(f"Graphviz installation failed: {e}")
+            return None
+
+# Устанавливаем Graphviz при запуске приложения
+graphviz_bin_path = install_graphviz()
 app = Flask(__name__, static_folder='static', static_url_path='')
 CORS(app)
 
